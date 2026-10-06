@@ -1,14 +1,15 @@
-rom datetime import datetime, timedelta
+from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.providers.google.cloud.operators.bigquery import (
-    BigQueryInsertJobOperator,
     BigQueryCheckOperator,
+    BigQueryInsertJobOperator,
 )
 
 
+
 PROJECT_ID = "cobalt-mantis-464811-j9"
-DATASET = "Tavic_Technical_Assesment"
+DATASET = "Tatvic_Technical_Assesment"
 
 ORDERS_TABLE = f"{PROJECT_ID}.{DATASET}.orders"
 DAILY_AGG_TABLE = f"{PROJECT_ID}.{DATASET}.customer_daily_orders"
@@ -24,21 +25,50 @@ default_args = {
 
 
 with DAG(
-    dag_id="Customer_Lifetime_Purchase",
-
-    start_date=datetime(2026, 10, 6),
-
+    dag_id="Customer_Lifetime_Purchase_Update",
+    start_date=datetime(2026, 10, 06),
     schedule="0 2 * * *",
-
     catchup=False,
-
     max_active_runs=1,
-
     default_args=default_args,
-
 ) as dag:
 
- 
+    check_orders_available = BigQueryCheckOperator(
+        task_id="check_orders_available",
+
+        sql=f"""
+        SELECT COUNT(*) > 0
+        FROM `{ORDERS_TABLE}`
+        WHERE order_date = DATE('{{{{ ds }}}}')
+        """,
+
+        use_legacy_sql=False,
+
+        gcp_conn_id="bigquery_default",
+    )
+
+
+
+    validate_orders = BigQueryCheckOperator(
+        task_id="validate_orders",
+
+        sql=f"""
+        SELECT COUNT(*) = 0
+        FROM `{ORDERS_TABLE}`
+        WHERE order_date = DATE('{{{{ ds }}}}')
+          AND (
+              order_id IS NULL
+              OR user_id IS NULL
+              OR revenue IS NULL
+          )
+        """,
+
+        use_legacy_sql=False,
+
+        gcp_conn_id="bigquery_default",
+    )
+
+
     create_daily_customer_aggregate = BigQueryInsertJobOperator(
         task_id="create_daily_customer_aggregate",
 
@@ -70,14 +100,11 @@ with DAG(
                 ON target.order_date = source.order_date
                 AND target.user_id = source.user_id
 
-
                 WHEN MATCHED THEN
 
                     UPDATE SET
-
                         order_count = source.order_count,
                         revenue = source.revenue
-
 
                 WHEN NOT MATCHED THEN
 
@@ -97,15 +124,12 @@ with DAG(
                 """,
 
                 "useLegacySql": False,
-
             }
         },
 
         gcp_conn_id="bigquery_default",
     )
 
-
- 
 
     update_lifetime_table = BigQueryInsertJobOperator(
         task_id="update_lifetime_table",
@@ -142,17 +166,11 @@ with DAG(
 
                 ON target.user_id = source.user_id
 
-
                 WHEN MATCHED THEN
 
                     UPDATE SET
-
-                        lifetime_orders =
-                            source.lifetime_orders,
-
-                        lifetime_revenue =
-                            source.lifetime_revenue
-
+                        lifetime_orders = source.lifetime_orders,
+                        lifetime_revenue = source.lifetime_revenue
 
                 WHEN NOT MATCHED THEN
 
@@ -170,13 +188,11 @@ with DAG(
                 """,
 
                 "useLegacySql": False,
-
             }
         },
 
         gcp_conn_id="bigquery_default",
     )
-
 
 
     validate_lifetime_table = BigQueryCheckOperator(
@@ -185,7 +201,6 @@ with DAG(
         sql=f"""
         SELECT COUNT(*) = 0
         FROM `{LIFETIME_TABLE}`
-
         WHERE user_id IS NULL
            OR lifetime_orders < 0
            OR lifetime_revenue < 0
@@ -194,8 +209,8 @@ with DAG(
         use_legacy_sql=False,
 
         gcp_conn_id="bigquery_default",
+        
     )
 
 
-        check_orders_available >> validate_orders >> create_daily_customer_aggregate >> update_lifetime_table >> validate_lifetime_table
-    )
+check_orders_available >> validate_orders >> create_daily_customer_aggregate >> update_lifetime_table >> validate_lifetime_table
